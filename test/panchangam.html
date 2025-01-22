@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Panchangam</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="bg-gray-100 font-sans">
+    <div class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold mb-4 text-center">Daily Panchangam</h1>
+
+        <div id="panchangam-container" class="bg-white shadow-md rounded-lg p-6">
+
+            <div id="loading-container" class="text-center text-gray-500">Loading...</div>
+
+            <div id="data-container" style="display: none;">
+                <h2 id="date" class="text-2xl font-semibold mb-4 text-center"></h2>
+
+                <h3 class="text-xl font-semibold mb-2">General Information</h3>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="font-medium">City:</div>
+                    <div id="city"></div>
+
+                    <div class="font-medium">Sunrise:</div>
+                    <div id="sunrise"></div>
+
+                    <div class="font-medium">Sunset:</div>
+                    <div id="sunset"></div>
+
+                    <div class="font-medium">Month:</div>
+                    <div id="month"></div>
+
+                    <div class="font-medium">Paksham:</div>
+                    <div id="paksham"></div>
+                </div>
+
+                <h3 class="text-xl font-semibold mb-2">Panchangam Details</h3>
+                <div class="mb-4">
+                    <h4 class="font-semibold text-lg mb-1">Tithi</h4>
+                    <div id="tithi"></div>
+                </div>
+                <div class="mb-4">
+                    <h4 class="font-semibold text-lg mb-1">Nakshatram</h4>
+                    <div id="nakshatram"></div>
+                </div>
+                <div class="mb-4">
+                    <h4 class="font-semibold text-lg mb-1">Yogam</h4>
+                    <div id="yogam"></div>
+                </div>
+                <div class="mb-4">
+                    <h4 class="font-semibold text-lg mb-1">Karanam</h4>
+                    <div id="karanam"></div>
+                </div>
+
+                <h3 class="text-xl font-semibold mb-2">Time to Avoid</h3>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="font-medium">Rahukalam:</div>
+                    <div id="rahukalam"></div>
+                    <div class="font-medium">Yamagandam:</div>
+                    <div id="yamagandam"></div>
+
+                    <div class="font-medium">Varjyam:</div>
+                    <div id="varjyam"></div>
+
+                    <div class="font-medium">Gulika:</div>
+                    <div id="gulika"></div>
+                </div>
+                <h3 class="text-xl font-semibold mb-2">Good Time</h3>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="font-medium">Amritakalam:</div>
+                    <div id="amritakalam"></div>
+                    <div class="font-medium">Abhijit Muhurtham:</div>
+                    <div id="abhijitMuhurtham"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const panchangamContainer = document.getElementById('panchangam-container');
+        const loadingContainer = document.getElementById('loading-container');
+        const dataContainer = document.getElementById('data-container');
+        const apiUrl = 'http://localhost:1316/api/daily-panchangam?date=2025-01-22';
+        // Fetch Data
+        const fetchData = async () => {
+             try {
+                const response = await fetch(apiUrl);
+                const data = await response.json();
+                  if(data.loading){
+                      loadingContainer.style.display ="block";
+                      dataContainer.style.display = "none";
+                    } else {
+                         loadingContainer.style.display = "none";
+                          dataContainer.style.display = "block";
+                        document.getElementById('date').textContent = data.date;
+                        document.getElementById('city').textContent = data.generalInfo.city;
+                         document.getElementById('sunrise').textContent = data.generalInfo.sunrise;
+                        document.getElementById('sunset').textContent = data.generalInfo.sunset;
+                        document.getElementById('month').textContent = data.generalInfo.month;
+                        document.getElementById('paksham').textContent = data.generalInfo.paksham;
+
+                      const tithiElement = document.getElementById('tithi');
+                         data.panchangamDetails.tithi.forEach(item => {
+                            const itemDiv = document.createElement('div')
+                                for( const key in item){
+                                  itemDiv.innerHTML += `<span><span class="font-semibold">${key.charAt(0).toUpperCase() + key.slice(1)}:</span> ${item[key]}</span></br>`
+                                }
+                               tithiElement.appendChild(itemDiv);
+                           })
+
+                        const nakshatramElement = document.getElementById('nakshatram');
+                           data.panchangamDetails.nakshatram.forEach(item => {
+                              const itemDiv = document.createElement('div')
+                               for( const key in item){
+                                  itemDiv.innerHTML += `<span><span class="font-semibold">${key.charAt(0).toUpperCase() + key.slice(1)}:</span> ${item[key]}</span></br>`
+                                }
+                               nakshatramElement.appendChild(itemDiv);
+                           })
+                          const yogamElement = document.getElementById('yogam');
+                            data.panchangamDetails.yogam.forEach(item => {
+                              const itemDiv = document.createElement('div')
+                                for( const key in item){
+                                  itemDiv.innerHTML += `<span><span class="font-semibold">${key.charAt(0).toUpperCase() + key.slice(1)}:</span> ${item[key]}</span></br>`
+                                }
+                               yogamElement.appendChild(itemDiv);
+                           })
+
+                         const karanamElement = document.getElementById('karanam');
+                           data.panchangamDetails.karanam.forEach(item => {
+                              const itemDiv = document.createElement('div')
+                                for( const key in item){
+                                   itemDiv.innerHTML += `<span><span class="font-semibold">${key.charAt(0).toUpperCase() + key.slice(1)}:</span> ${item[key]}</span></br>`
+                                }
+                                karanamElement.appendChild(itemDiv);
+                           })
+
+                           document.getElementById('rahukalam').textContent = data.timeToAvoid.rahukalam;
+                            document.getElementById('yamagandam').textContent = data.timeToAvoid.yamagandam;
+                           document.getElementById('varjyam').textContent = data.timeToAvoid.varjyam;
+                            document.getElementById('gulika').textContent = data.timeToAvoid.gulika;
+
+                             document.getElementById('amritakalam').textContent = data.goodTime.amritakalam;
+                            document.getElementById('abhijitMuhurtham').textContent = data.goodTime.abhijitMuhurtham;
+                    }
+
+
+            } catch (error) {
+                console.error('Error fetching panchangam data:', error);
+                loadingContainer.textContent = "Failed to load";
+            }
+        };
+
+        fetchData();
+    </script>
+</body>
+
+</html>
