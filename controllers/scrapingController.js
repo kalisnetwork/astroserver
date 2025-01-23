@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import NodeCache from 'node-cache';
+import cron from 'node-cron';
 
 const signs = [
     "aries",
@@ -18,58 +19,52 @@ const signs = [
 ];
 
 // Initialize node-cache with a 24-hour TTL (time-to-live)
-const cache = new NodeCache({ stdTTL: 24 * 60 * 60, checkperiod: 120 }); //check every 2 mins to delete expired cache, for safety we make check period half of the ttl
+const cache = new NodeCache({ stdTTL: 24 * 60 * 60, checkperiod: 120 });
 
 const scrapeAstroSageDailyHoroscope = async (sign, retryCount = 0, maxRetries = 3) => {
     const url = `https://www.astrosage.com/horoscope/daily-${sign}-horoscope.asp`;
-    console.log("Fetching Url:", url);
-
+    
     try {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        const response = await axios.get(url, { timeout: 5000 });
-        console.log("Response Status:", response.status);
+        const response = await axios.get(url, { 
+            timeout: 10000, // Increased timeout to 10 seconds
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+
         if (response.status !== 200) {
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
-        const html = response.data;
-        console.log("HTML Content:", html.slice(0, 200));
-        const $ = cheerio.load(html);
-        console.log("Parsed HTML:", $);
+
+        const $ = cheerio.load(response.data);
 
         const horoscopeTitle = $('.ui-sign-heading h1').text().trim();
         const horoscopeDate = $('.ui-large-hdg').text().trim();
 
         const horoscopeDiv = $('.ui-large-content.text-justify');
-        let horoscopeText = "";
-        if (horoscopeDiv.length > 0) {
-            horoscopeText = horoscopeDiv.first().text().trim();
-        }
-        const luckyNumberElement = $('.ui-large-content.text-justify:contains("Lucky Number :- ")');
-        const luckyNumberText = luckyNumberElement.text();
-        const luckyNumber = luckyNumberText.replace('Lucky Number :- ', '').trim();
+        const horoscopeText = horoscopeDiv.length > 0 ? horoscopeDiv.first().text().trim() : "";
 
-        const luckyColorElement = $('.ui-large-content.text-justify:contains("Lucky Color :- ")');
-        const luckyColorText = luckyColorElement.text();
-        const luckyColor = luckyColorText.replace('Lucky Color :- ', '').trim();
-
-        const remedyElement = $('.ui-large-content.text-justify:contains("Remedy :- ")');
-        const remedyText = remedyElement.text();
-        const remedy = remedyText.replace('Remedy :- ', '').trim();
-
-        console.log('horoscopeDiv:', horoscopeDiv.length);
+        const extractDetail = (keyword) => {
+            const element = $(`.ui-large-content.text-justify:contains("${keyword}")`);
+            const text = element.text();
+            return text.replace(`${keyword} :- `, '').trim();
+        };
 
         return {
             title: horoscopeTitle,
             date: horoscopeDate,
             text: horoscopeText,
-            luckyNumber: luckyNumber,
-            luckyColor: luckyColor,
-            remedy: remedy
+            luckyNumber: extractDetail('Lucky Number'),
+            luckyColor: extractDetail('Lucky Color'),
+            remedy: extractDetail('Remedy')
         };
     } catch (error) {
         console.error(`Error scraping ${sign} horoscope (attempt ${retryCount + 1}):`, error.message);
+        
         if (retryCount < maxRetries) {
             console.log(`Retrying ${sign} horoscope scraping`);
+            // Add a random delay to prevent potential rate limiting
+            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
             return await scrapeAstroSageDailyHoroscope(sign, retryCount + 1, maxRetries);
         } else {
             console.error(`Max retries exceeded for ${sign} horoscope.`);
@@ -78,63 +73,115 @@ const scrapeAstroSageDailyHoroscope = async (sign, retryCount = 0, maxRetries = 
     }
 };
 
-const fetchAllDailyHoroscopesSequentially = async () => {
-    const horoscopes = {};
-    for (const sign of signs) {
-        const horoscope = await scrapeAstroSageDailyHoroscope(sign);
-        horoscopes[sign] = horoscope;
+const fetchAllDailyHoroscopesConcurrently = async () => {
+    try {
+        // Use Promise.all for concurrent fetching
+        const horoscopePromises = signs.map(sign => 
+            scrapeAstroSageDailyHoroscope(sign)
+        );
+
+        // Fetch all horoscopes concurrently
+        const horoscopesArray = await Promise.all(horoscopePromises);
+
+        // Convert array to object
+        const horoscopes = {};
+        signs.forEach((sign, index) => {
+            horoscopes[sign] = horoscopesArray[index];
+        });
+
+        return horoscopes;
+    } catch (error) {
+        console.error('Error in concurrent horoscope fetching:', error);
+        throw error;
     }
-    return horoscopes;
 };
 
+// Function to get or fetch horoscopes
+const getOrFetchHoroscopes = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const cacheKey = `dailyHoroscopes-${today}`;
+    
+    // Check if we have cached data
+    const cachedData = cache.get(cacheKey);
+    
+    // If we have valid cached data, return it
+    if (cachedData && !cachedData.loading && Object.keys(cachedData).length > 1) {
+        return cachedData;
+    }
+    
+    // Otherwise, fetch new horoscopes
+    try {
+        const horoscopes = await fetchAllDailyHoroscopesConcurrently();
+        
+        // Cache the new horoscopes
+        const dataToCache = { 
+            ...horoscopes, 
+            timestamp: new Date().toISOString(),
+            loading: false 
+        };
+        
+        cache.set(cacheKey, dataToCache);
+        
+        return dataToCache;
+    } catch (error) {
+        console.error('Error fetching horoscopes:', error);
+        return { error: 'Failed to fetch horoscopes', loading: false };
+    }
+};
+
+// Automatic refresh function
+const setupHoroscopeRefresh = () => {
+    // Schedule a daily refresh at midnight (00:00)
+    cron.schedule('0 0 * * *', async () => {
+        console.log('Automatically refreshing daily horoscopes');
+        try {
+            await getOrFetchHoroscopes();
+        } catch (error) {
+            console.error('Scheduled horoscope refresh failed:', error);
+        }
+    });
+
+    // Also set up an initial fetch when the server starts
+    getOrFetchHoroscopes();
+};
+
+// Express route handler
 export const getDailyHoroscopes = async (req, res, next) => {
     try {
-        const cachedData = cache.get('dailyHoroscopes');
-
-        if (cachedData && !cachedData.loading) {
-            console.log("Serving from cache");
-            return res.json({ ...cachedData, loading: false });
-        }
-
-        if (cachedData && cachedData.loading) {
-            console.log("Serving from cache and loading");
-            return res.json({ ...cachedData, loading: true });
-        }
-
-        console.log("Cache invalid or empty, fetching new horoscopes");
-        cache.set('dailyHoroscopes', { loading: true });
-        res.json({ loading: true });
-        fetchAllDailyHoroscopesSequentially()
-            .then((horoscopes) => {
-                cache.set('dailyHoroscopes', { ...horoscopes, loading: false });
-                console.log("New Data fetched in background");
-            })
-            .catch((error) => {
-                console.error("Error fetching in background", error);
-                cache.set('dailyHoroscopes', { loading: false })
-            });
-
-
+        const horoscopes = await getOrFetchHoroscopes();
+        res.json(horoscopes);
     } catch (error) {
-        console.error('Error fetching daily horoscopes', error);
+        console.error('Error in getDailyHoroscopes:', error);
         next(error);
     }
 };
 
-const scrapeDailyPanchangam = async (date) => {
+// Initialize the automatic refresh when the module is imported
+setupHoroscopeRefresh();
+
+export { cache }; // Export cache for potential manual management if needed
+
+
+// Separate cache for tracking refresh attempts
+const refreshCache = new NodeCache({ stdTTL: 86400, checkperiod: 120 }); // 24 hours
+const panchangamCache = new NodeCache({ stdTTL: 86400, checkperiod: 120 }); // 24 hours
+
+const scrapeDailyPanchangam = async (date, retryCount = 0, maxRetries = 3) => {
     const url = `https://telugu.panchangam.org/dailypanchangam.php?date=${date}`;
-    console.log("Fetching Panchangam Url:", url);
+    
     try {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        const response = await axios.get(url, { timeout: 5000 });
-        console.log("Response Status:", response.status);
+        const response = await axios.get(url, { 
+            timeout: 10000,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+
         if (response.status !== 200) {
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
-        const html = response.data;
-        console.log("HTML Content:", html.slice(0, 200));
-        const $ = cheerio.load(html);
-        console.log("Parsed HTML:", $);
+
+        const $ = cheerio.load(response.data);
 
         const panchangamData = {};
 
@@ -199,11 +246,57 @@ const scrapeDailyPanchangam = async (date) => {
 
         return panchangamData;
     } catch (error) {
-        console.error(`Error scraping Panchangam data for ${date}:`, error.message);
+        console.error(`Error scraping Panchangam for ${date}:`, error.message);
+        
+        if (retryCount < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+            return await scrapeDailyPanchangam(date, retryCount + 1, maxRetries);
+        }
         return null;
     }
 };
 
+const getOrFetchPanchangam = async (date) => {
+    const cacheKey = `panchangam-${date}`;
+    
+    // Check cached data
+    const cachedData = panchangamCache.get(cacheKey);
+    if (cachedData) return cachedData;
+    
+    try {
+        const panchangamData = await scrapeDailyPanchangam(date);
+        
+        const dataToCache = { 
+            ...panchangamData, 
+            timestamp: new Date().toISOString(),
+        };
+        
+        panchangamCache.set(cacheKey, dataToCache);
+        
+        return dataToCache;
+    } catch (error) {
+        console.error('Error fetching Panchangam:', error);
+        return { error: 'Failed to fetch Panchangam' };
+    }
+};
+
+const setupPanchangamRefresh = () => {
+    // Schedule a daily refresh at midnight
+    cron.schedule('0 0 * * *', async () => {
+        console.log('Attempting daily Panchangam refresh');
+        try {
+            // Get today's date in YYYY-MM-DD format
+            const today = new Date().toISOString().split('T')[0];
+            await getOrFetchPanchangam(today);
+        } catch (error) {
+            console.error('Scheduled Panchangam refresh failed:', error);
+        }
+    });
+
+    // Initial fetch when server starts (for today's date)
+    const today = new Date().toISOString().split('T')[0];
+    getOrFetchPanchangam(today);
+};
 
 export const getDailyPanchangam = async (req, res, next) => {
     const { date } = req.query;
@@ -213,36 +306,15 @@ export const getDailyPanchangam = async (req, res, next) => {
     }
 
     try {
-        const cacheKey = `panchangam-${date}`;
-        const cachedData = cache.get(cacheKey);
-
-        if (cachedData && !cachedData.loading) {
-            console.log("Serving from cache");
-            return res.json({ ...cachedData, loading: false });
-        }
-        if (cachedData && cachedData.loading) {
-            console.log("Serving from cache and loading");
-            return res.json({ ...cachedData, loading: true });
-        }
-        console.log("Cache invalid or empty, fetching new panchangam");
-        cache.set(cacheKey, { loading: true });
-        res.json({ loading: true })
-        scrapeDailyPanchangam(date)
-            .then((panchangamData) => {
-                if (panchangamData) {
-                    cache.set(cacheKey, { ...panchangamData, loading: false });
-                    console.log("New panchangam Data fetched in background");
-                } else {
-                    cache.set(cacheKey, { loading: false });
-                }
-
-            })
-            .catch((error) => {
-                console.error("Error fetching panchangam data in background", error);
-                cache.set(cacheKey, { loading: false });
-            })
+        const panchangamData = await getOrFetchPanchangam(date);
+        res.json(panchangamData);
     } catch (error) {
-        console.error('Error fetching daily panchangam', error);
-        next(error)
+        console.error('Error in getDailyPanchangam:', error);
+        next(error);
     }
 };
+
+// Initialize the automatic refresh when the module is imported
+setupPanchangamRefresh();
+
+export { panchangamCache };
